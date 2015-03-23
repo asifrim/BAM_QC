@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 import os
 import sys
+import csv
+import pybedtools
 
 """
     Author: Alejandro Sifrim
@@ -13,7 +15,7 @@ import sys
     ----------
     1) Path to the hist file
 	2) Path to output summary stats per probe
-	3) 
+	3) Path to output summary stats per gene
     Returns
     -------
     
@@ -21,7 +23,9 @@ import sys
 
 
 hist_path = sys.argv[1]
-output_path = sys.argv[2]
+probe_stats_path = sys.argv[2]
+gene_stats_path = sys.argv[3]
+ddg2p_path = sys.argv[4]
 
 def split_hist(hist_path):
 	tmp_all_path = os.path.dirname(hist_path)+"/"+os.path.basename(hist_path).strip(".gz")+".all.gz"
@@ -54,10 +58,47 @@ def process_all(all_path):
 	res["median"] = hist[hist["cumsum"] >= 0.5].iloc[0]["depth"]	
 	print "all\t%(median)s" % res
 
-def gene_coverage(hist_path,gene_interval):
-	pass
+def gene_coverage(hist_sum_path,gene_bed,output_path):
+	histbed = pybedtools.BedTool(hist_sum_path)
+	bedbed = pybedtools.BedTool(gene_bed)
+	fieldnames = ["symbol","size","cumulative_size_targetted","median_targetted_coverage","nr_targets_below_5x","nr_targets_below_10x","nr_targets_below_20x"]
+	csvwriter = csv.DictWriter(open(output_path,'w'), fieldnames=fieldnames,delimiter="\t")
+	csvwriter.writeheader()
+	for gene in bedbed:
+		res = {} 
+		hits = histbed.all_hits(gene)
+		res["symbol"] = gene.name
+		res["size"] = int(gene.end - gene.start)
+		res["cumulative_size_targetted"] = 0
+		median_bases_read = 0
+		res["nr_targets_below_5x"] = 0
+		res["nr_targets_below_10x"] = 0
+		res["nr_targets_below_20x"] = 0
+
+		for hit in hits:
+			hit_length = int(hit.end-hit.start)
+			res["cumulative_size_targetted"] += hit_length
+			hit_median_coverage = float(hit.name)
+			median_bases_read += hit_length*hit_median_coverage
+			if hit_median_coverage <= 5:
+				res["nr_targets_below_5x"] += 1
+			if hit_median_coverage <= 10:
+				res["nr_targets_below_10x"] += 1
+			if hit_median_coverage <= 20:
+				res["nr_targets_below_20x"] += 1
+
+		try:
+			res["median_targetted_coverage"] = median_bases_read/res["cumulative_size_targetted"]
+		except ZeroDivisionError:
+			res["median_targetted_coverage"] = 0 
+		csvwriter.writerow(res)
+
+	
+
 
 
 if __name__ == "__main__":
+	gene_coverage(hist_sum_path,ddg2p_path,output_path)
 	(tmp_all_path,tmp_interval_path) = split_hist(sys.argv[1])
-	process_intervals(tmp_interval_path,output_path) 
+	process_intervals(tmp_interval_path,probe_stats_path)
+	gene_coverage(probe_stats_path,ddg2p_path,gene_stats_path)
